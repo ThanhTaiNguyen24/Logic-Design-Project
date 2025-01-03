@@ -1,0 +1,276 @@
+  #include <M5Core2.h>
+  #include <DHT20.h>
+  #include <Wire.h>
+  #include <Adafruit_NeoPixel.h>
+  #include <Adafruit_MQTT.h>
+  #include <Adafruit_MQTT_Client.h>
+  #include <WiFi.h>
+  #include <ESPAsyncWebServer.h>
+  #include <SPIFFS.h>
+  #include <PubSubClient.h>
+  #define WLAN_SSID "RD-SEAI_2.4G"
+  #define WLAN_PASS ""
+  // #define AIO_USERNAME  "Taioccho"
+  // #define AIO_KEY       "aio_GAzm50zeE6u2WheOGlKSFLkml5EW"
+  // #define AIO_SERVER      "io.adafruit.com"
+  // #define AIO_SERVERPORT  1883
+#define OHS_SERVER      "mqtt.ohstem.vn"
+#define OHS_SERVERPORT  1883
+#define OHS_USERNAME    "ohstem"
+#define OHS_KEY         ""
+
+  WiFiClient client;
+  // Adafruit_MQTT_Client mqtt(&client, AIO_SERVER, AIO_SERVERPORT, AIO_USERNAME, AIO_USERNAME, AIO_KEY);
+
+  // /****************************** Feeds ***************************************/
+  // //Cambiennhietdo
+  // Adafruit_MQTT_Publish cambiennhietdo = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/cambiennhietdo");
+
+  // //Cambiendoam
+  // Adafruit_MQTT_Publish cambiendoam = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/cambiendoam");
+
+  // //Cambienanhsang
+  // Adafruit_MQTT_Publish cambienanhsang = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/cambienanhsang");
+
+  // //nutnhan
+  // Adafruit_MQTT_Subscribe nutnhan1 = Adafruit_MQTT_Subscribe(&mqtt, AIO_USERNAME "/feeds/nutnhan1", MQTT_QOS_1);
+
+  // //Battatden
+  // Adafruit_MQTT_Publish battatden = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/battatden");
+
+  // //Doamdat
+  // Adafruit_MQTT_Publish doamdat = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/doamdat");
+
+Adafruit_MQTT_Client mqtt(&client, OHS_SERVER, OHS_SERVERPORT, OHS_USERNAME, OHS_USERNAME, OHS_KEY); //for Ohstem
+// MQTT Feeds for ohstem 
+Adafruit_MQTT_Publish temperatureFeed = Adafruit_MQTT_Publish(&mqtt, OHS_USERNAME "/feeds/V2");
+Adafruit_MQTT_Publish humidityFeed = Adafruit_MQTT_Publish(&mqtt, OHS_USERNAME "/feeds/V3");
+Adafruit_MQTT_Publish soilMoistureFeed = Adafruit_MQTT_Publish(&mqtt, OHS_USERNAME "/feeds/V4");
+Adafruit_MQTT_Publish lightFeed = Adafruit_MQTT_Publish(&mqtt, OHS_USERNAME "/feeds/V5");
+Adafruit_MQTT_Subscribe onoffbutton = Adafruit_MQTT_Subscribe(&mqtt, OHS_USERNAME "/feeds/V1", MQTT_QOS_1);
+  void TaskBlink(void *pvParameters);
+  void TaskTemperatureHumidity(void *pvParameters);
+  void TaskSoilMoistureAndRelay(void *pvParameters);
+  void TaskLightAndLED(void *pvParameters);
+
+  DHT20 dht20;
+  Adafruit_NeoPixel pixels3(4, 13, NEO_GRB + NEO_KHZ800);
+  AsyncWebServer server(80);
+  void MQTT_connect() {
+    int8_t ret;
+    if (mqtt.connected()) {
+      return;
+    }
+
+    Serial.print("Connecting to MQTT... ");
+
+    uint8_t retries = 3;
+    while ((ret = mqtt.connect()) != 0) { // connect will return 0 for connected
+      Serial.println(mqtt.connectErrorString(ret));
+      Serial.println("Retrying MQTT connection in 10 seconds...");
+      mqtt.disconnect();
+      delay(10000);  // wait 10 seconds
+      retries--;
+      if (retries == 0) {
+        // basically die and wait for WDT to reset me
+        while (1);
+      }
+    }
+    Serial.println("MQTT Connected!");
+  }
+
+  void setup() {
+
+      M5.begin(true, false, true, true, kMBusModeOutput, false); 
+      dht20.begin();
+      pixels3.begin();
+      
+      M5.Lcd.setTextSize(4);  
+      M5.Lcd.fillScreen(BLACK);  
+      WiFi.softAP(WLAN_SSID);
+      WiFi.begin(WLAN_SSID, WLAN_PASS);
+      delay(2000);
+
+      while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+      Serial.print(".");
+      }
+      Serial.println();
+      Serial.print("IP address: ");
+      Serial.println(WiFi.localIP());
+
+    xTaskCreate(TaskTemperatureHumidity, "Task Temperature" ,2048  ,NULL  ,2 , NULL);
+    xTaskCreate(TaskLightAndLED, "Task Light LED" ,2048  ,NULL  ,2 , NULL);
+    xTaskCreate( TaskSoilMoistureAndRelay, "Task Soild Relay" ,2048  ,NULL  ,2 , NULL);
+    
+      if (!SPIFFS.begin(true)) { //lưu trữ tệp web.html, gửi đến trình duyệt 
+        Serial.println("SPIFFS Mount Failed");
+        // return;
+      };
+
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+        request->send(SPIFFS, "/m5core2.html", "text/html");
+    });
+
+    
+    // fetch temperature
+    server.on("/temperature", HTTP_GET, [](AsyncWebServerRequest *request){
+      float temperature = dht20.getTemperature();
+      request->send(200, "text/plain", String(temperature)); // Hiển thị thông số temperature (được updated liên tục) trên web
+    });
+
+    // fetch humidity
+    server.on("/humidity", HTTP_GET, [](AsyncWebServerRequest *request){
+      float humidity = dht20.getHumidity();
+      request->send(200, "text/plain", String(humidity)); // Hiển thị thông số humidity (được updated liên tục) trên web
+    });
+
+    // fetch light intensity (using analogRead for demo)
+    server.on("/light", HTTP_GET, [](AsyncWebServerRequest *request){
+      float lightIntensity = analogRead(34);  // đọc ánh sáng
+      request->send(200, "text/plain", String(lightIntensity));  // Hiển thị thông số LightIntensity (được updated liên tục) trên web
+    });
+    // fetch soil moisture
+    server.on("/soilmoisture", HTTP_GET, [](AsyncWebServerRequest *request){
+      uint32_t moisture = analogRead(36);  // Read moisture sensor
+      request->send(200, "text/plain", String(moisture));  // Send moisture value to web
+    });
+
+    // Start the server
+    server.begin();
+    Serial.printf("Basic Multi-Threading Arduino Example\n");
+
+  
+    }
+  
+  void loop() {
+    MQTT_connect();
+    mqtt.processPackets(10000);
+    if(! mqtt.ping()) {
+        mqtt.disconnect();
+    }
+
+  
+
+  }
+  void TaskTemperatureHumidity(void *pvParameters) {  
+    while(1) {
+      M5.Lcd.clear();                          
+      dht20.read();
+      float Temperature = dht20.getTemperature();
+      float Humidity = dht20.getHumidity();
+      if (temperatureFeed.publish(Temperature)) {
+      Serial.println("Temperature Published Successfully!");
+    } //for ohstem pubblish
+        if (humidityFeed.publish(Humidity)) {
+      Serial.println("Humidity Published Successfully!");
+    }//for ohstem pubblish
+
+      // Display Temperature
+      M5.Lcd.fillRect(0, 0, 320, 60, BLACK);
+      M5.Lcd.setCursor(0, 0);
+      M5.Lcd.setTextColor(PURPLE);
+      M5.Lcd.println("Temperature:");
+      M5.Lcd.setTextColor(WHITE);
+      M5.Lcd.setCursor(0, 30);
+      M5.Lcd.printf("%.2f C", Temperature); 
+ 
+
+      // Display Humidity
+      M5.Lcd.fillRect(0, 60, 320, 60, BLACK);
+      M5.Lcd.setCursor(0, 60);
+      M5.Lcd.setTextColor(PURPLE);
+      M5.Lcd.println("Humidity:");
+      M5.Lcd.setTextColor(WHITE);
+      M5.Lcd.setCursor(0, 90);
+      M5.Lcd.printf("%.2f %%", Humidity); 
+
+      
+      //Display Light
+      float light = analogRead(34);
+      M5.Lcd.fillRect(0, 120, 320, 60, BLACK);
+      M5.Lcd.setCursor(0, 120);        
+      M5.Lcd.setTextColor(PURPLE);     
+      M5.Lcd.println("Light: ");
+      M5.Lcd.setTextColor(WHITE);
+      M5.Lcd.setCursor(0, 150);    
+      M5.Lcd.printf("%.2f lux", light); 
+
+      //Display moisture
+      int moisture = analogRead(36);
+      M5.Lcd.fillRect(0, 180, 320, 60, BLACK);
+      M5.Lcd.setCursor(0, 180);        
+      M5.Lcd.setTextColor(PURPLE);     
+      M5.Lcd.println("moisture: ");
+      M5.Lcd.setTextColor(WHITE);
+      M5.Lcd.setCursor(0, 210);    
+      M5.Lcd.printf("%u", moisture); 
+
+      Serial.print("Temperature: ");
+      Serial.print(Temperature);
+      Serial.println(" C");
+      Serial.print("Humidity: ");
+      Serial.print(Humidity);
+      Serial.println(" %");
+      // if (cambiennhietdo.publish(Temperature)){
+      //   Serial.println(F("Published Temperature Sensor successfully!!"));
+      // }
+      // if (cambiendoam.publish(Humidity)){
+      //   Serial.println(F("Published Humidity Sensor successfully!!"));
+      // }
+      vTaskDelay(2000);
+      
+    }
+  }
+  void TaskLightAndLED(void *pvParameters) { 
+  while(1) { 
+    uint32_t light = analogRead(34);
+      Serial.print(F("Light: "));
+      Serial.println(light);  
+    if (lightFeed.publish(light)) {
+      Serial.println("Light Level Published Successfully!");
+    }//for ohstem pubblish
+    if (light < 400) {
+      pixels3.setPixelColor(0, pixels3.Color(0,0,255));  
+      pixels3.setPixelColor(1, pixels3.Color(0,255,0));  
+      pixels3.setPixelColor(2, pixels3.Color(255,0,0)); 
+      pixels3.setPixelColor(3, pixels3.Color(128, 0, 128));  
+      pixels3.show();
+    }
+    else if (light > 600) {
+      pixels3.setPixelColor(0, pixels3.Color(0,0,0));  
+      pixels3.setPixelColor(1, pixels3.Color(0,0,0)); 
+      pixels3.setPixelColor(2, pixels3.Color(0,0,0));  
+      pixels3.setPixelColor(3, pixels3.Color(0,0,0));  
+      pixels3.show();
+    }
+    
+    vTaskDelay(2000); 
+  }
+  }
+  void TaskSoilMoistureAndRelay(void *pvParameters) {  
+
+    pinMode(2, OUTPUT);
+
+    while(1) { 
+      uint32_t moisture = analogRead(36);   
+      if (soilMoistureFeed.publish(moisture)) {
+      Serial.println("Soil Moisture Published Successfully!");
+    }//for ohstem pubblish
+      Serial.print("IP: ");
+      Serial.println(WiFi.softAPIP());                     
+      if(moisture > 300){
+        digitalWrite(2, LOW);
+      }
+      if(moisture < 50){
+        digitalWrite(2, HIGH);
+      }
+      Serial.println(F("Moisture:"));
+      Serial.println(moisture);
+      // if (doamdat.publish(moisture)){
+      //   Serial.println(F("Published Moisture Sensor successfully!!"));
+      // }
+      Serial.println("");
+      vTaskDelay(2000);
+    }
+  }
