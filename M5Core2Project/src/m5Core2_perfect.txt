@@ -8,7 +8,8 @@
   #include <ESPAsyncWebServer.h>
   #include <SPIFFS.h>
   #include <PubSubClient.h>
-  #define WLAN_SSID "RD-SEAI_2.4G"
+  //#define WLAN_SSID "RD-SEAI_2.4G" //comment this to run on ohstem
+   #define WLAN_SSID "ESP32" //uncomment this to run the webserver 
   #define WLAN_PASS ""
   // #define AIO_USERNAME  "Taioccho"
   // #define AIO_KEY       "aio_GAzm50zeE6u2WheOGlKSFLkml5EW"
@@ -87,17 +88,19 @@ Adafruit_MQTT_Subscribe onoffbutton = Adafruit_MQTT_Subscribe(&mqtt, OHS_USERNAM
       
       M5.Lcd.setTextSize(4);  
       M5.Lcd.fillScreen(BLACK);  
-      WiFi.softAP(WLAN_SSID);
-      WiFi.begin(WLAN_SSID, WLAN_PASS);
-      delay(2000);
+     WiFi.softAP(WLAN_SSID);  //Uncomment this to run webserver
 
-      while (WiFi.status() != WL_CONNECTED) {
-      delay(500);
-      Serial.print(".");
-      }
-      Serial.println();
-      Serial.print("IP address: ");
-      Serial.println(WiFi.localIP());
+     ////uncomment to run ohstem
+      // WiFi.begin(WLAN_SSID, WLAN_PASS);
+      // delay(2000);
+
+      // while (WiFi.status() != WL_CONNECTED) {
+      // delay(500);
+      // Serial.print(".");
+      // }
+      // Serial.println();
+      // Serial.print("IP address: ");
+      // Serial.println(WiFi.localIP());
 
     xTaskCreate(TaskTemperatureHumidity, "Task Temperature" ,2048  ,NULL  ,2 , NULL);
     xTaskCreate(TaskLightAndLED, "Task Light LED" ,2048  ,NULL  ,2 , NULL);
@@ -212,6 +215,8 @@ Adafruit_MQTT_Subscribe onoffbutton = Adafruit_MQTT_Subscribe(&mqtt, OHS_USERNAM
       Serial.print("Humidity: ");
       Serial.print(Humidity);
       Serial.println(" %");
+
+      //Uncomment for adafruit 
       // if (cambiennhietdo.publish(Temperature)){
       //   Serial.println(F("Published Temperature Sensor successfully!!"));
       // }
